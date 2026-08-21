@@ -50,6 +50,12 @@ Discovery fails explicitly if a household user response omits its ID or returns 
 
 `eightctl --user-id <id> whoami` can display that configured ID offline without account credentials.
 
+Create a one-time vibration alarm, optionally with thermal wake:
+
+```sh
+eightctl alarm create-one-off --time 08:30 --thermal-level -10
+```
+
 ## Commands
 
 | Area | Commands |
