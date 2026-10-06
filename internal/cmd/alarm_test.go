@@ -2,7 +2,13 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/spf13/viper"
 
@@ -93,25 +99,92 @@ func TestOneOffAlarmPayloadIncludesSmartSetting(t *testing.T) {
 	if alarm.Smart == nil || !alarm.Smart.LightSleepEnabled || alarm.Smart.SleepCapEnabled || alarm.Smart.SleepCapMinutes != 480 {
 		t.Fatalf("alarm Smart settings = %#v, want explicit Smart Alarm settings", alarm.Smart)
 	}
-	if !alarm.Thermal.Enabled || alarm.Thermal.Level != -100 {
-		t.Fatalf("Smart Alarm should default to -100 cold thermal wake, got %#v", alarm.Thermal)
+	if alarm.Thermal.Enabled || alarm.Thermal.Level != 0 {
+		t.Fatalf("Smart-only alarm must leave thermal wake disabled, got %#v", alarm.Thermal)
 	}
 }
 
-func TestOneOffAlarmPayloadSmartDefaultsToCold(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	viper.Set("one-off-time", "08:30")
-	viper.Set("one-off-vibration-level", 50)
-	viper.Set("one-off-pattern", "RISE")
-	viper.Set("one-off-smart", true)
-
-	alarm, err := oneOffAlarmFromFlags(alarmCreateOneOffCmd)
-	if err != nil {
-		t.Fatalf("oneOffAlarmFromFlags: %v", err)
+// Fresh processes exercise the real CLI bindings without sharing Cobra/Viper state.
+// RunE is replaced before execution so no authentication or provider call occurs.
+func TestOneOffAlarmThermalOptIn(t *testing.T) {
+	cases := map[string]struct {
+		flags       []string
+		config      string
+		wantEnabled bool
+		wantLevel   int
+		wantSmart   bool
+		wantErr     bool
+	}{
+		"plain":                     {},
+		"smart only":                {flags: []string{"--smart"}, wantSmart: true},
+		"smart neutral":             {flags: []string{"--smart", "--thermal-level=0"}, wantEnabled: true, wantSmart: true},
+		"smart cold":                {flags: []string{"--smart", "--thermal-level=-100"}, wantEnabled: true, wantLevel: -100, wantSmart: true},
+		"smart hot":                 {flags: []string{"--smart", "--thermal-level=100"}, wantEnabled: true, wantLevel: 100, wantSmart: true},
+		"plain explicit":            {flags: []string{"--thermal-level=-10"}, wantEnabled: true, wantLevel: -10},
+		"smart disabled":            {flags: []string{"--smart", "--no-thermal"}, wantSmart: true},
+		"disable overrides level":   {flags: []string{"--smart", "--thermal-level=-100", "--no-thermal"}, wantLevel: -100, wantSmart: true},
+		"configured level":          {flags: []string{"--smart"}, config: "one-off-thermal-level: 10\n", wantEnabled: true, wantLevel: 10, wantSmart: true},
+		"configured neutral":        {flags: []string{"--smart"}, config: "one-off-thermal-level: 0\n", wantEnabled: true, wantSmart: true},
+		"disable overrides config":  {flags: []string{"--smart", "--no-thermal"}, config: "one-off-thermal-level: 10\n", wantLevel: 10, wantSmart: true},
+		"flag overrides config":     {flags: []string{"--smart", "--thermal-level=-20"}, config: "one-off-thermal-level: 10\n", wantEnabled: true, wantLevel: -20, wantSmart: true},
+		"invalid config text":       {flags: []string{"--smart"}, config: "one-off-thermal-level: bogus\n", wantErr: true},
+		"invalid config fraction":   {flags: []string{"--smart"}, config: "one-off-thermal-level: 10.5\n", wantErr: true},
+		"invalid config boolean":    {flags: []string{"--smart"}, config: "one-off-thermal-level: true\n", wantErr: true},
+		"invalid config disabled":   {flags: []string{"--smart", "--no-thermal"}, config: "one-off-thermal-level: bogus\n", wantErr: true},
+		"invalid cold":              {flags: []string{"--smart", "--thermal-level=-101"}, wantErr: true},
+		"invalid hot even disabled": {flags: []string{"--smart", "--thermal-level=101", "--no-thermal"}, wantErr: true},
 	}
-	if !alarm.Thermal.Enabled || alarm.Thermal.Level != -100 {
-		t.Fatalf("expected default cold thermal wake for Smart Alarm, got %#v", alarm.Thermal)
+	if name := os.Getenv("EIGHTCTL_TEST_ONE_OFF_CASE"); name != "" {
+		tc := cases[name]
+		configPath := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(configPath, []byte(tc.config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		alarmCreateOneOffCmd.RunE = func(cmd *cobra.Command, args []string) error {
+			alarm, err := oneOffAlarmFromFlags(cmd)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected invalid thermal level to fail")
+				}
+				return nil
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if alarm.Thermal.Enabled != tc.wantEnabled || alarm.Thermal.Level != tc.wantLevel {
+				t.Fatalf("thermal = %#v, want enabled %v, level %d", alarm.Thermal, tc.wantEnabled, tc.wantLevel)
+			}
+			if (alarm.Smart != nil) != tc.wantSmart {
+				t.Fatalf("smart = %#v, want enabled %v", alarm.Smart, tc.wantSmart)
+			}
+			if tc.wantSmart {
+				if err := verifySmartAlarm(&alarm); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return nil
+		}
+		args := append([]string{"alarm", "create-one-off", "--time=08:30", "--config", configPath, "--quiet"}, tc.flags...)
+		rootCmd.SetArgs(args)
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	for name := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			command := exec.Command(os.Args[0], "-test.run=^TestOneOffAlarmThermalOptIn$")
+			for _, variable := range os.Environ() {
+				if !strings.HasPrefix(variable, "EIGHTCTL_") {
+					command.Env = append(command.Env, variable)
+				}
+			}
+			command.Env = append(command.Env, "EIGHTCTL_TEST_ONE_OFF_CASE="+name)
+			if out, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("one-off thermal flags: %v\n%s", err, out)
+			}
+		})
 	}
 }
 

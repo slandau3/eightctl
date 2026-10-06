@@ -50,12 +50,29 @@ Discovery fails explicitly if a household user response omits its ID or returns 
 
 `eightctl --user-id <id> whoami` can display that configured ID offline without account credentials.
 
-Create a one-time vibration alarm, optionally with thermal wake or Smart Alarm
-light-sleep support:
+Experimental one-off Smart Alarm proposal (provider compatibility is still
+unverified):
 
 ```sh
-eightctl alarm create-one-off --time 08:30 --thermal-level -10 --smart
+eightctl alarm create-one-off --time 08:30 --smart
+# Opt in to thermal wake only when intended:
+eightctl alarm create-one-off --time 08:30 --smart --thermal-level -10
 ```
+
+`--smart` alone leaves thermal wake disabled. Supplying `--thermal-level`
+(including `0`) or an explicit `one-off-thermal-level` configuration value enables
+it; `--no-thermal` overrides either. Thermal levels must be integers from -100
+to 100; malformed configuration values are rejected. Smart Alarm read-back is required before the
+command reports success. If creation may have succeeded but verification fails,
+inspect the official app before retrying to avoid duplicate alarms.
+
+This proposal continues [#70](https://github.com/steipete/eightctl/pull/70) and
+[#72](https://github.com/steipete/eightctl/pull/72), retaining Steven Landau's
+contribution. It still needs maintainer sponsorship and controlled-account
+create/read-back/cleanup evidence; fixture tests do not establish provider or
+device behavior. See the [verification plan](docs/smart-alarm-verification.md).
+Existing alarm route/schema failures remain tracked separately in
+[#110](https://github.com/steipete/eightctl/issues/110).
 
 ## Commands
 

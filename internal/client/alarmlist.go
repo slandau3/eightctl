@@ -37,7 +37,8 @@ type AlarmSmart struct {
 	SleepCapMinutes   int  `json:"sleepCapMinutes"`
 }
 
-// OneOffAlarm is the current app-API payload for a single-use alarm.
+// OneOffAlarm models the proposed app-API payload for a single-use alarm.
+// The provider contract still requires controlled-account verification.
 type OneOffAlarm struct {
 	ID            string         `json:"id,omitempty"`
 	Enabled       bool           `json:"enabled"`
@@ -76,7 +77,7 @@ func (c *Client) CreateAlarm(ctx context.Context, alarm Alarm) (*Alarm, error) {
 	return &res.Alarm, nil
 }
 
-// CreateOneOffAlarm creates a single-use alarm through the current app API.
+// CreateOneOffAlarm requests a single-use alarm through the app API.
 // Unlike the recurring alarm endpoint, this payload has no weekday repeat
 // configuration and uses nested vibration and thermal wake settings.
 func (c *Client) CreateOneOffAlarm(ctx context.Context, alarm OneOffAlarm) (*OneOffAlarm, error) {
@@ -114,8 +115,8 @@ func decodeOneOffAlarmResponse(data []byte) (OneOffAlarm, error) {
 	return alarm, nil
 }
 
-// ListAlarmsV2 reads the current app alarm representation, including Smart
-// Alarm settings returned by the current alarm endpoint.
+// ListAlarmsV2 reads the app alarm representation used for Smart Alarm
+// read-back. The endpoint contract is not yet verified against a controlled account.
 func (c *Client) ListAlarmsV2(ctx context.Context) ([]OneOffAlarm, error) {
 	if err := c.requireUser(ctx); err != nil {
 		return nil, err

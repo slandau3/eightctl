@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,7 +84,10 @@ var alarmCreateCmd = &cobra.Command{
 
 var alarmCreateOneOffCmd = &cobra.Command{
 	Use:   "create-one-off",
-	Short: "Create a single-use alarm",
+	Short: "Create a single-use alarm (experimental)",
+	Long: "Create a single-use alarm through an undocumented provider API. " +
+		"Compatibility and device behavior still require controlled-account verification. " +
+		"Smart Alarm does not enable thermal wake; supply --thermal-level to opt in.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireAuthFields(); err != nil {
 			return err
@@ -101,12 +105,12 @@ var alarmCreateOneOffCmd = &cobra.Command{
 		}
 		if smart != nil {
 			if res.ID == "" {
-				return fmt.Errorf("Smart Alarm creation may have succeeded, but the response did not include an ID for read-back")
+				return fmt.Errorf("smart alarm creation may have succeeded, but the response did not include an ID for read-back")
 			}
 			if err := verifyPersistedSmartAlarm(func() (*client.OneOffAlarm, error) {
 				return cl.FindAlarmV2(context.Background(), res.ID)
 			}, 3, 250*time.Millisecond); err != nil {
-				return fmt.Errorf("Smart Alarm creation may have succeeded for %s, but read-back failed: %w", res.ID, err)
+				return fmt.Errorf("smart alarm creation may have succeeded for %s, but read-back failed: %w", res.ID, err)
 			}
 		}
 		if res.ID != "" {
@@ -134,13 +138,14 @@ func oneOffAlarmFromFlags(cmd *cobra.Command) (client.OneOffAlarm, error) {
 	smartEnabled := viper.GetBool("one-off-smart")
 	thermalProvided := oneOffThermalLevelProvided(cmd)
 	thermalEnabled := thermalProvided && !viper.GetBool("one-off-no-thermal")
-	thermalLevel := viper.GetInt("one-off-thermal-level")
-	// Default Smart Alarms to cold (-100) for a sharper wake — studies suggest cold > heat for alertness.
-	if smartEnabled && !thermalProvided && !viper.GetBool("one-off-no-thermal") {
-		thermalEnabled = true
-		thermalLevel = -100
+	thermalLevel := 0
+	if thermalProvided {
+		thermalLevel, err = strconv.Atoi(fmt.Sprint(viper.Get("one-off-thermal-level")))
+		if err != nil {
+			return client.OneOffAlarm{}, fmt.Errorf("--thermal-level must be an integer between -100 and 100")
+		}
 	}
-	if err := validateOneOffThermalLevel(thermalProvided || (smartEnabled && thermalEnabled), thermalLevel); err != nil {
+	if err := validateOneOffThermalLevel(thermalProvided, thermalLevel); err != nil {
 		return client.OneOffAlarm{}, err
 	}
 	return client.OneOffAlarm{
@@ -161,17 +166,17 @@ func oneOffAlarmFromFlags(cmd *cobra.Command) (client.OneOffAlarm, error) {
 
 func verifySmartAlarm(alarm *client.OneOffAlarm) error {
 	if alarm == nil || alarm.Smart == nil || !alarm.Smart.LightSleepEnabled {
-		return fmt.Errorf("Eight Sleep did not confirm Smart Alarm light-sleep support")
+		return fmt.Errorf("provider did not confirm Smart Alarm light-sleep support")
 	}
 	if alarm.Smart.SleepCapEnabled || alarm.Smart.SleepCapMinutes != 480 {
-		return fmt.Errorf("Eight Sleep did not confirm the Smart Alarm sleep cap settings")
+		return fmt.Errorf("provider did not confirm the Smart Alarm sleep cap settings")
 	}
 	return nil
 }
 
 func verifyPersistedSmartAlarm(find func() (*client.OneOffAlarm, error), attempts int, delay time.Duration) error {
 	if attempts < 1 {
-		return fmt.Errorf("Smart Alarm read-back requires at least one attempt")
+		return fmt.Errorf("smart alarm read-back requires at least one attempt")
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
@@ -301,7 +306,7 @@ func init() {
 	alarmCreateOneOffCmd.Flags().String("pattern", "RISE", "Vibration pattern: RISE or INTENSE")
 	alarmCreateOneOffCmd.Flags().Int("thermal-level", 0, "Thermal wake level (-100..100); enables thermal wake when supplied")
 	alarmCreateOneOffCmd.Flags().Bool("no-thermal", false, "Disable thermal wake")
-	alarmCreateOneOffCmd.Flags().Bool("smart", false, "Enable Smart Alarm/light-sleep wake window")
+	alarmCreateOneOffCmd.Flags().Bool("smart", false, "Enable Smart Alarm/light-sleep wake window; thermal wake remains opt-in")
 	viper.BindPFlag("one-off-time", alarmCreateOneOffCmd.Flags().Lookup("time"))
 	viper.BindPFlag("one-off-no-vibration", alarmCreateOneOffCmd.Flags().Lookup("no-vibration"))
 	viper.BindPFlag("one-off-vibration-level", alarmCreateOneOffCmd.Flags().Lookup("vibration-level"))
