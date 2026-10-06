@@ -38,6 +38,11 @@ Alarms (existing-command API migration remains tracked in
   `one-off-thermal-level` config value is supplied; `--no-thermal` overrides both.
   `--smart` attempts persisted Smart Alarm read-back with bounded retries and
   reports uncertain creation instead of silently falling back to a fixed alarm.
+  Creation uses a private durable reservation and one non-retrying POST. An
+  unresolved attempt blocks further creations for the provider/target user;
+  identical confirmed retries use read-back. A deliberate next alarm requires
+  the latest confirmed `--after-attempt` token, consumed once. See the
+  [local attempt protection limits](smart-alarm-attempts.md).
   The proposed app API contract, actual wake behavior and cleanup still need
   [controlled-account verification](smart-alarm-verification.md) and a maintainer
   support decision before merge. This feature does not migrate existing commands.

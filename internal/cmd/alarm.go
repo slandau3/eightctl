@@ -99,7 +99,16 @@ var alarmCreateOneOffCmd = &cobra.Command{
 		smart := alarm.Smart
 
 		cl := client.New(viper.GetString("email"), viper.GetString("password"), viper.GetString("user_id"), viper.GetString("client_id"), viper.GetString("client_secret"))
-		res, err := cl.CreateOneOffAlarm(context.Background(), alarm)
+		afterAttempt, err := cmd.Flags().GetString("after-attempt")
+		if err != nil {
+			return err
+		}
+		var res *client.OneOffAlarm
+		if afterAttempt == "" {
+			res, err = cl.CreateOneOffAlarm(context.Background(), alarm)
+		} else {
+			res, err = cl.CreateNextOneOffAlarm(context.Background(), alarm, afterAttempt)
+		}
 		if err != nil {
 			return err
 		}
@@ -110,11 +119,11 @@ var alarmCreateOneOffCmd = &cobra.Command{
 			if err := verifyPersistedSmartAlarm(func() (*client.OneOffAlarm, error) {
 				return cl.FindAlarmV2(context.Background(), res.ID)
 			}, 3, 250*time.Millisecond); err != nil {
-				return fmt.Errorf("smart alarm creation may have succeeded for %s, but read-back failed: %w", res.ID, err)
+				return fmt.Errorf("smart alarm creation may have succeeded for %s (attempt %s), but read-back failed: %w", res.ID, res.CreationAttempt, err)
 			}
 		}
 		if res.ID != "" {
-			fmt.Printf("created one-off alarm %s for %s\n", res.ID, res.Time)
+			fmt.Printf("created one-off alarm %s for %s (attempt %s)\n", res.ID, res.Time, res.CreationAttempt)
 		} else {
 			fmt.Printf("created one-off alarm for %s\n", res.Time)
 		}
@@ -306,6 +315,7 @@ func init() {
 	alarmCreateOneOffCmd.Flags().String("pattern", "RISE", "Vibration pattern: RISE or INTENSE")
 	alarmCreateOneOffCmd.Flags().Int("thermal-level", 0, "Thermal wake level (-100..100); enables thermal wake when supplied")
 	alarmCreateOneOffCmd.Flags().Bool("no-thermal", false, "Disable thermal wake")
+	alarmCreateOneOffCmd.Flags().String("after-attempt", "", "Explicitly create another alarm after the latest confirmed attempt token")
 	alarmCreateOneOffCmd.Flags().Bool("smart", false, "Enable Smart Alarm/light-sleep wake window; thermal wake remains opt-in")
 	viper.BindPFlag("one-off-time", alarmCreateOneOffCmd.Flags().Lookup("time"))
 	viper.BindPFlag("one-off-no-vibration", alarmCreateOneOffCmd.Flags().Lookup("no-vibration"))

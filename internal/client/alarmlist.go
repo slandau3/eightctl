@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/steipete/eightctl/internal/alarmguard"
 )
 
 // Alarm represents alarm payload.
@@ -40,13 +42,14 @@ type AlarmSmart struct {
 // OneOffAlarm models the proposed app-API payload for a single-use alarm.
 // The provider contract still requires controlled-account verification.
 type OneOffAlarm struct {
-	ID            string         `json:"id,omitempty"`
-	Enabled       bool           `json:"enabled"`
-	Time          string         `json:"time"`
-	NextTimestamp string         `json:"nextTimestamp,omitempty"`
-	Vibration     AlarmVibration `json:"vibration"`
-	Thermal       AlarmThermal   `json:"thermal"`
-	Smart         *AlarmSmart    `json:"smart,omitempty"`
+	CreationAttempt string         `json:"-"`
+	ID              string         `json:"id,omitempty"`
+	Enabled         bool           `json:"enabled"`
+	Time            string         `json:"time"`
+	NextTimestamp   string         `json:"nextTimestamp,omitempty"`
+	Vibration       AlarmVibration `json:"vibration"`
+	Thermal         AlarmThermal   `json:"thermal"`
+	Smart           *AlarmSmart    `json:"smart,omitempty"`
 }
 
 func (c *Client) ListAlarms(ctx context.Context) ([]Alarm, error) {
@@ -81,18 +84,68 @@ func (c *Client) CreateAlarm(ctx context.Context, alarm Alarm) (*Alarm, error) {
 // Unlike the recurring alarm endpoint, this payload has no weekday repeat
 // configuration and uses nested vibration and thermal wake settings.
 func (c *Client) CreateOneOffAlarm(ctx context.Context, alarm OneOffAlarm) (*OneOffAlarm, error) {
+	return c.createOneOffAlarm(ctx, alarm, "")
+}
+
+// CreateNextOneOffAlarm deliberately starts a new creation after the latest
+// confirmed attempt. A pending attempt cannot be acknowledged or bypassed.
+func (c *Client) CreateNextOneOffAlarm(ctx context.Context, alarm OneOffAlarm, afterAttempt string) (*OneOffAlarm, error) {
+	if afterAttempt == "" {
+		return nil, fmt.Errorf("--after-attempt requires a confirmed attempt token")
+	}
+	return c.createOneOffAlarm(ctx, alarm, afterAttempt)
+}
+
+func (c *Client) createOneOffAlarm(ctx context.Context, alarm OneOffAlarm, afterAttempt string) (*OneOffAlarm, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := c.requireUser(ctx); err != nil {
 		return nil, err
 	}
-	path := fmt.Sprintf("/v1/users/%s/alarms", c.UserID)
-	var raw json.RawMessage
-	if err := c.doApp(ctx, http.MethodPost, path, nil, alarm, &raw); err != nil {
+	if err := c.ensureToken(ctx); err != nil {
 		return nil, err
 	}
-	created, err := decodeOneOffAlarmResponse(raw)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	request, err := json.Marshal(alarm)
 	if err != nil {
 		return nil, err
 	}
+	store := c.alarmAttempts
+	if store == nil {
+		defaultStore, err := alarmguard.Default()
+		if err != nil {
+			return nil, err
+		}
+		store = &defaultStore
+	}
+	var created OneOffAlarm
+	receipt, reused, err := store.Run(alarmguard.Scope(c.AppURL, c.UserID), request, afterAttempt, func() (string, error) {
+		path := fmt.Sprintf("/v1/users/%s/alarms", c.UserID)
+		var raw json.RawMessage
+		if err := c.doAppOnce(ctx, path, alarm, &raw); err != nil {
+			return "", err
+		}
+		var err error
+		created, err = decodeOneOffAlarmResponse(raw)
+		if err != nil {
+			return "", err
+		}
+		return created.ID, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if reused {
+		persisted, err := c.FindAlarmV2(ctx, receipt.AlarmID)
+		if err != nil {
+			return nil, &alarmguard.UncertainError{Attempt: receipt.Attempt, Cause: err}
+		}
+		created = *persisted
+	}
+	created.CreationAttempt = receipt.Attempt
 	return &created, nil
 }
 

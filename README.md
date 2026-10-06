@@ -55,7 +55,7 @@ unverified):
 
 ```sh
 eightctl alarm create-one-off --time 08:30 --smart
-# Opt in to thermal wake only when intended:
+# Alternative first creation: opt in to thermal wake only when intended:
 eightctl alarm create-one-off --time 08:30 --smart --thermal-level -10
 ```
 
@@ -63,8 +63,14 @@ eightctl alarm create-one-off --time 08:30 --smart --thermal-level -10
 (including `0`) or an explicit `one-off-thermal-level` configuration value enables
 it; `--no-thermal` overrides either. Thermal levels must be integers from -100
 to 100; malformed configuration values are rejected. Smart Alarm read-back is required before the
-command reports success. If creation may have succeeded but verification fails,
-inspect the official app before retrying to avoid duplicate alarms.
+command reports success. A private local receipt reserves each creation before
+one POST. An uncertain response or interrupted attempt blocks subsequent
+creations for that provider/user; changing flags or restarting cannot bypass it.
+Retrying a recorded creation reads its known ID without another POST. To
+deliberately create a later alarm, supply `--after-attempt <token>` using the
+latest confirmed attempt token printed on success. That token is consumed once
+and cannot unlock an uncertain attempt. See [attempt protection and recovery
+limits](docs/smart-alarm-attempts.md).
 
 This proposal continues [#70](https://github.com/steipete/eightctl/pull/70) and
 [#72](https://github.com/steipete/eightctl/pull/72), retaining Steven Landau's

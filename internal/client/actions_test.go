@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/steipete/eightctl/internal/alarmguard"
 )
 
 type recordedRequest struct {
@@ -49,6 +52,7 @@ func newRecordingClient(t *testing.T) (*Client, *[]recordedRequest, func()) {
 	c.token = "tok"
 	c.tokenExp = time.Now().Add(time.Hour)
 	c.HTTP = srv.Client()
+	c.alarmAttempts = &alarmguard.Store{Dir: filepath.Join(t.TempDir(), "attempts")}
 
 	cleanup := func() {
 		appAPIBaseURL = oldAppAPIBaseURL

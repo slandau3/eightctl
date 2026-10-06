@@ -50,8 +50,11 @@ After the contracts and the exact actions are authorized:
    record any authorized official-app/device observation separately.
 4. Delete only the disposable alarms using the confirmed official-app flow.
    Verify they are absent from both list read-back and the app, then restore and
-   compare the baseline. If creation is uncertain, inspect before retrying:
-   a POST may have succeeded even when read-back failed.
+   compare the baseline. Preserve the local receipt and use its confirmed token
+   with `--after-attempt` for each separately authorized subsequent creation.
+   If creation is uncertain, stop: a POST may have succeeded even when read-back
+   failed. Pending receipts and interrupted-process locks cannot be automatically
+   reset. See [attempt protection and recovery limits](smart-alarm-attempts.md).
 
 ## Evidence to attach
 
